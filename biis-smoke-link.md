@@ -1,0 +1,1 @@
+[BIIS Neon Function smoke test](https://br-royal-breeze-b151vaxf-biissmoke.compute.c-5.eu-central-1.aws.neon.tech/)
