@@ -1,0 +1,30 @@
+name: NUCA pager probe
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Probe ASP.NET page 2
+        run: |
+          python - <<'PY'
+          import json
+          from app import probe_zone
+          for zone in (4797, 3792):
+              try:
+                  result = probe_zone(zone, 2)
+                  print('NUCA_PROBE_'+str(zone)+' '+json.dumps(result, ensure_ascii=False, separators=(',', ':')))
+              except Exception as exc:
+                  print('NUCA_ERROR_'+str(zone)+' '+repr(exc))
+                  raise
+          PY
