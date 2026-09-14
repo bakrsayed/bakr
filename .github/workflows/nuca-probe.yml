@@ -8,14 +8,14 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install playwright==1.55.0
-      - name: Capture real browser POST immediately
+      - name: Capture exact Chrome form POST then abort locally
         run: |
           python - <<'PY'
           import json, time
@@ -26,8 +26,14 @@ jobs:
               browser=p.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
               ctx=browser.new_context(locale='ar-EG',user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36')
               page=ctx.new_page()
+              page.set_default_timeout(15000)
+              page.goto('https://lands.nuca.gov.eg/ar/ViewZone.aspx?ID=3792',wait_until='domcontentloaded',timeout=60000)
+              print('GET_OK',page.url,flush=True)
+              checked=page.locator("input[name='ctl00$MainContent$PlotType']:checked")
+              print('CHECKED_RADIO',checked.count(),checked.first.get_attribute('value') if checked.count() else None,flush=True)
               captured=[]
-              def cap(req):
+              def handler(route):
+                  req=route.request
                   if req.method=='POST' and 'ViewZone.aspx' in req.url:
                       body=req.post_data or ''
                       d=parse_qs(body,keep_blank_values=True)
@@ -42,17 +48,19 @@ jobs:
                       }
                       captured.append(info)
                       print('REAL_POST '+json.dumps(info,ensure_ascii=False,separators=(',',':')),flush=True)
-              page.on('request',cap)
-              page.goto('https://lands.nuca.gov.eg/ar/ViewZone.aspx?ID=3792',wait_until='domcontentloaded',timeout=60000)
-              checked=page.locator("input[name='ctl00$MainContent$PlotType']:checked")
-              print('CHECKED_RADIO',checked.count(), checked.first.get_attribute('value') if checked.count() else None,flush=True)
+                      route.abort('aborted')
+                  else:
+                      route.continue_()
+              page.route('**/*',handler)
               link=page.locator("#MainContent_grdPlots a[href*='Page$2']").first
-              print('PAGE2_LINK',link.count(),link.get_attribute('href') if link.count() else None,flush=True)
+              print('LINK',link.count(),link.get_attribute('href') if link.count() else None,flush=True)
               try:
-                  link.click(no_wait_after=True,timeout=10000)
+                  link.click(timeout=10000,no_wait_after=True)
               except Exception as e:
-                  print('CLICK_RETURNED',type(e).__name__,str(e),flush=True)
-              time.sleep(5)
+                  print('CLICK_END',type(e).__name__,str(e),flush=True)
+              time.sleep(1)
               print('CAPTURE_COUNT',len(captured),flush=True)
+              if not captured:
+                  raise SystemExit('no POST captured')
               browser.close()
           PY
