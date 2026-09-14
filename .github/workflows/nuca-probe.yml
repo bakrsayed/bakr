@@ -15,36 +15,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - name: Diagnose ASP.NET GET and pager
+      - name: Validate Page 2 on small zone
         run: |
           python - <<'PY'
-          import json, socket
-          import requests
-          from bs4 import BeautifulSoup
-          from app import parse_rows, parse_pager, hidden_fields, BASE_URL, UA
-
-          zone = 4797
-          url = f'{BASE_URL}/ar/ViewZone.aspx?ID={zone}'
-          print('DNS', socket.getaddrinfo('lands.nuca.gov.eg', 443, type=socket.SOCK_STREAM))
-          s = requests.Session()
-          h = {'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language':'ar-EG,ar;q=0.9,en;q=0.7'}
-          r = s.get(url, headers=h, timeout=(8,30))
-          print('GET', r.status_code, r.url, 'len', len(r.text), 'server', r.headers.get('server'))
-          print('COOKIES', [(c.name, len(c.value), c.domain, c.path) for c in s.cookies])
-          rows = parse_rows(r.text)
-          pager = parse_pager(r.text)
-          hidden, action = hidden_fields(r.text)
-          soup = BeautifulSoup(r.text, 'html.parser')
-          form = soup.find('form')
-          inputs = []
-          for x in form.find_all('input') if form else []:
-              inputs.append({'name':x.get('name'),'id':x.get('id'),'type':x.get('type'),'value_len':len(x.get('value','')),'value_preview':x.get('value','')[:80]})
-          print('FORM', json.dumps({'action':action,'method': form.get('method') if form else None}, ensure_ascii=False))
-          print('HIDDEN', json.dumps({k:len(v) for k,v in hidden.items()}, ensure_ascii=False))
-          print('INPUTS', json.dumps(inputs, ensure_ascii=False, separators=(',',':')))
-          print('PAGER', json.dumps(pager[:30], ensure_ascii=False, separators=(',',':')))
-          print('ROWS', json.dumps({'count':len(rows),'plots':[x[1] for x in rows]}, ensure_ascii=False, separators=(',',':')))
-          needle='Page$2'
-          i=r.text.find(needle)
-          print('PAGE2_CONTEXT', r.text[max(0,i-400):i+500].replace('\n',' ') if i>=0 else 'NOT_FOUND')
+          import json
+          from app import probe_zone
+          result = probe_zone(3792, 2)
+          print('NUCA_SMALL_ZONE '+json.dumps(result, ensure_ascii=False, separators=(',',':')))
+          if not result.get('ok'):
+              raise SystemExit('pagination probe did not change page')
           PY
