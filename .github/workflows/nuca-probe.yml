@@ -8,95 +8,51 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: |
-          pip install -r requirements.txt playwright==1.55.0
-          which google-chrome || which google-chrome-stable || true
-          google-chrome --version || google-chrome-stable --version || true
-      - name: Browser page-2 probe with POST diagnostics
+      - run: pip install playwright==1.55.0
+      - name: Capture real browser POST immediately
         run: |
           python - <<'PY'
-          import json
+          import json, time
           from urllib.parse import parse_qs
-          from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-
-          def row_plots(page):
-              rows = page.locator('#MainContent_grdPlots tr').evaluate_all('''els => els.map(tr => ({
-                cls: tr.className || '',
-                cells: Array.from(tr.children).filter(x => x.tagName === 'TD').map(td => td.innerText.trim().replace(/\\s+/g,' '))
-              })).filter(r => r.cells.length >= 10 && !r.cls.includes('footer'))''')
-              out=[]
-              for r in rows:
-                  c=r['cells']
-                  if len(c) >= 10 and c[1] and c[2]:
-                      out.append(c)
-              return out
+          from playwright.sync_api import sync_playwright
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(channel='chrome', headless=True, args=['--no-sandbox','--disable-dev-shm-usage'])
-              context = browser.new_context(
-                  locale='ar-EG',
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
-                  viewport={'width': 1365, 'height': 900},
-              )
-              page = context.new_page()
-              page.set_default_timeout(30000)
-              page.set_default_navigation_timeout(120000)
-
+              browser=p.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+              ctx=browser.new_context(locale='ar-EG',user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36')
+              page=ctx.new_page()
               captured=[]
-              def on_request(req):
-                  if req.method == 'POST' and 'ViewZone.aspx' in req.url:
+              def cap(req):
+                  if req.method=='POST' and 'ViewZone.aspx' in req.url:
                       body=req.post_data or ''
-                      parsed=parse_qs(body, keep_blank_values=True)
-                      captured.append({
-                          'url':req.url,
-                          'method':req.method,
-                          'body_len':len(body),
-                          'keys':sorted(parsed.keys()),
-                          'target':parsed.get('__EVENTTARGET',[''])[0],
-                          'argument':parsed.get('__EVENTARGUMENT',[''])[0],
-                          'value_lens':{k:len(v[0]) if v else 0 for k,v in parsed.items()},
-                          'plot_type':parsed.get('ctl00$MainContent$PlotType',[''])[0],
-                          'search_value':parsed.get('ctl00$MainContent$txtPlotNumber',[''])[0],
-                      })
-              page.on('request', on_request)
-
-              for zone in (3792, 4797):
-                  url=f'https://lands.nuca.gov.eg/ar/ViewZone.aspx?ID={zone}'
-                  print('ZONE_BEGIN',zone, flush=True)
-                  try:
-                      resp=page.goto(url, wait_until='domcontentloaded', timeout=60000)
-                      print('GET_STATUS',zone, resp.status if resp else None, 'URL',page.url, flush=True)
-                      rows1=row_plots(page)
-                      print('PAGE1',zone,json.dumps({'n':len(rows1),'plots':[r[1] for r in rows1[:25]]},ensure_ascii=False),flush=True)
-                      cookies=awaitable=None
-                      print('COOKIES',zone,[(c['name'],len(c['value'])) for c in context.cookies() if 'nuca.gov.eg' in c.get('domain','')],flush=True)
-                      link=page.locator("#MainContent_grdPlots a[href*='Page$2']").first
-                      print('LINK_COUNT',zone,link.count(),flush=True)
-                      if link.count()==0:
-                          print('NO_PAGE2_LINK',zone,flush=True)
-                          continue
-                      try:
-                          with page.expect_navigation(wait_until='domcontentloaded', timeout=120000):
-                              link.click()
-                          print('NAV_OK',zone,'URL',page.url,flush=True)
-                      except PlaywrightTimeoutError as e:
-                          print('NAV_TIMEOUT',zone,str(e),flush=True)
-                      except Exception as e:
-                          print('NAV_ERROR',zone,type(e).__name__,str(e),flush=True)
-                      print('POST_CAPTURED',zone,json.dumps(captured[-1] if captured else None,ensure_ascii=False,separators=(',',':')),flush=True)
-                      try:
-                          rows2=row_plots(page)
-                          print('PAGE_AFTER',zone,json.dumps({'n':len(rows2),'plots':[r[1] for r in rows2[:25]]},ensure_ascii=False),flush=True)
-                          print('CHANGED',zone,[r[1] for r in rows1] != [r[1] for r in rows2],flush=True)
-                      except Exception as e:
-                          print('ROW_PARSE_ERROR',zone,type(e).__name__,str(e),flush=True)
-                  except Exception as e:
-                      print('ZONE_ERROR',zone,type(e).__name__,str(e),flush=True)
+                      d=parse_qs(body,keep_blank_values=True)
+                      info={
+                        'url':req.url,'body_len':len(body),'keys':sorted(d.keys()),
+                        'target':d.get('__EVENTTARGET',[''])[0],
+                        'argument':d.get('__EVENTARGUMENT',[''])[0],
+                        'plot_type':d.get('ctl00$MainContent$PlotType',[''])[0],
+                        'search':d.get('ctl00$MainContent$txtPlotNumber',[''])[0],
+                        'lens':{k:len(v[0]) if v else 0 for k,v in d.items()},
+                        'headers':{k:v for k,v in req.headers.items() if k.lower() in ['origin','referer','content-type','sec-fetch-site','sec-fetch-mode','sec-fetch-dest','sec-fetch-user','upgrade-insecure-requests']}
+                      }
+                      captured.append(info)
+                      print('REAL_POST '+json.dumps(info,ensure_ascii=False,separators=(',',':')),flush=True)
+              page.on('request',cap)
+              page.goto('https://lands.nuca.gov.eg/ar/ViewZone.aspx?ID=3792',wait_until='domcontentloaded',timeout=60000)
+              checked=page.locator("input[name='ctl00$MainContent$PlotType']:checked")
+              print('CHECKED_RADIO',checked.count(), checked.first.get_attribute('value') if checked.count() else None,flush=True)
+              link=page.locator("#MainContent_grdPlots a[href*='Page$2']").first
+              print('PAGE2_LINK',link.count(),link.get_attribute('href') if link.count() else None,flush=True)
+              try:
+                  link.click(no_wait_after=True,timeout=10000)
+              except Exception as e:
+                  print('CLICK_RETURNED',type(e).__name__,str(e),flush=True)
+              time.sleep(5)
+              print('CAPTURE_COUNT',len(captured),flush=True)
               browser.close()
           PY
